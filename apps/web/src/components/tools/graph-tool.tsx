@@ -37,7 +37,10 @@ const NODE_LABELS: Record<GraphNode['type'], string> = {
   contract: 'Contract',
 };
 
-const EDGE_STYLE: Record<GraphEdge['relationship'], { dash: string; color: string; label: string }> = {
+const EDGE_STYLE: Record<
+  GraphEdge['relationship'],
+  { dash: string; color: string; label: string }
+> = {
   signs_for: { dash: 'none', color: '#64748b', label: 'signs for' },
   co_signer: { dash: 'none', color: '#f0782f', label: 'co-signer' },
   offer_match: { dash: '6 4', color: '#22c55e', label: 'offer match' },
@@ -74,11 +77,7 @@ function degreeFor(nodeId: string, edges: GraphEdge[]): number {
 }
 
 /** BFS shortest path between two node ids. Returns empty array if disconnected. */
-function shortestPath(
-  start: string,
-  end: string,
-  edges: GraphEdge[],
-): Set<string> | null {
+function shortestPath(start: string, end: string, edges: GraphEdge[]): Set<string> | null {
   if (start === end) return new Set([start]);
   const adj = new Map<string, Set<string>>();
   for (const e of edges) {
@@ -136,8 +135,11 @@ export function GraphTool() {
     edges: [],
   });
   const viewRef = useRef({ x: 0, y: 0, k: 1 });
-  const highlightRef = useRef<Set<string> | null>(null);
-  highlightRef.current = highlight;
+  const queryParamsRef = useRef({
+    runQuery: (_target?: string, _m?: GraphMode, _d?: number): Promise<void> => Promise.resolve(),
+    mode,
+    depth,
+  });
 
   const runQuery = useCallback(
     async (target = rootAccount, m = mode, d = depth) => {
@@ -169,6 +171,7 @@ export function GraphTool() {
     },
     [network, rootAccount, mode, depth],
   );
+  queryParamsRef.current = { runQuery, mode, depth };
 
   // Build layout from result and (re)start the force simulation.
   useEffect(() => {
@@ -214,8 +217,16 @@ export function GraphTool() {
     const gNode = d3.select<SVGGElement, unknown>(g);
     gNode.selectAll('*').remove();
 
-    const sim = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(edges).id((d: any) => d.id).distance(90).strength(0.6))
+    const sim = d3
+      .forceSimulation(nodes)
+      .force(
+        'link',
+        d3
+          .forceLink(edges)
+          .id((d: any) => d.id)
+          .distance(90)
+          .strength(0.6),
+      )
       .force('charge', d3.forceManyBody().strength(-260))
       .force('center', d3.forceCenter(width / 2, height / 2))
       .force('collide', d3.forceCollide(32))
@@ -256,7 +267,8 @@ export function GraphTool() {
       .append('g')
       .style('cursor', 'pointer')
       .call(
-        d3.drag<SVGGElement, LayoutNode>()
+        d3
+          .drag<SVGGElement, LayoutNode>()
           .on('start', (event, d) => {
             if (!event.active) sim.alphaTarget(0.3).restart();
             d.fx = d.x;
@@ -279,7 +291,11 @@ export function GraphTool() {
       .on('contextmenu', (event: MouseEvent, d) => {
         event.preventDefault();
         setRootAccount(d.id);
-        void runQuery(d.id, mode, depth);
+        void queryParamsRef.current.runQuery(
+          d.id,
+          queryParamsRef.current.mode,
+          queryParamsRef.current.depth,
+        );
       });
 
     node
@@ -309,7 +325,8 @@ export function GraphTool() {
     }
 
     // Apply zoom to the inner group; keep view transform in sync.
-    const zoomBehavior = d3.zoom<SVGSVGElement, unknown>()
+    const zoomBehavior = d3
+      .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.2, 4])
       .on('zoom', (event) => {
         gNode.attr('transform', event.transform.toString());
@@ -321,32 +338,31 @@ export function GraphTool() {
       sim.stop();
       simRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result]);
 
   // Highlight pass: re-color nodes on the highlighted path.
   useEffect(() => {
     const g = gRef.current;
-    if (!g) return;
+    if (!g || !result) return;
     const circles = g.querySelectorAll('.nodes g circle');
     const texts = g.querySelectorAll('.nodes g text');
-    const hl = highlightRef.current;
     circles.forEach((c, i) => {
       const d = (c as SVGCircleElement).dataset as unknown as { type?: string };
       const nodeType = d?.type as GraphNode['type'] | undefined;
       const base = NODE_COLORS[nodeType ?? 'account'];
+      const nodeId = layoutRef.current.nodes[i]?.id;
       (c as SVGCircleElement).setAttribute(
         'fill',
-        hl ? (hl.has(layoutRef.current.nodes[i]?.id) ? '#facc15' : '#475569') : base,
+        highlight ? (nodeId && highlight.has(nodeId) ? '#facc15' : '#475569') : base,
       );
     });
     texts.forEach((t, i) => {
+      const nodeId = layoutRef.current.nodes[i]?.id;
       (t as SVGTextElement).setAttribute(
         'fill',
-        hl && hl.has(layoutRef.current.nodes[i]?.id) ? '#facc15' : '#e2e8f0',
+        highlight && nodeId && highlight.has(nodeId) ? '#facc15' : '#e2e8f0',
       );
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlight, result]);
 
   const findPath = useCallback(() => {
@@ -406,7 +422,11 @@ export function GraphTool() {
   }, [result]);
 
   const legend = useMemo(
-    () => Object.entries(NODE_LABELS).map(([type, label]) => ({ type: type as GraphNode['type'], label })),
+    () =>
+      Object.entries(NODE_LABELS).map(([type, label]) => ({
+        type: type as GraphNode['type'],
+        label,
+      })),
     [],
   );
 
@@ -421,9 +441,7 @@ export function GraphTool() {
       <div className="rounded-lg border border-border bg-background p-4 space-y-3">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-[260px] space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">
-              Root account (G…)
-            </label>
+            <label className="text-xs font-medium text-muted-foreground">Root account (G…)</label>
             <input
               value={rootAccount}
               onChange={(e) => setRootAccount(e.target.value)}
@@ -478,7 +496,11 @@ export function GraphTool() {
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
           >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Network className="h-4 w-4" />}
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Network className="h-4 w-4" />
+            )}
             Build graph
           </button>
         </div>
@@ -487,8 +509,14 @@ export function GraphTool() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
           <div className="flex flex-wrap items-center gap-4">
             {legend.map(({ type, label }) => (
-              <span key={type} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ background: NODE_COLORS[type] }} />
+              <span
+                key={type}
+                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+              >
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ background: NODE_COLORS[type] }}
+                />
                 {label}
               </span>
             ))}
@@ -572,7 +600,11 @@ export function GraphTool() {
             <div className="absolute bottom-3 right-3 flex flex-col overflow-hidden rounded-md border border-slate-700 bg-slate-900/90">
               <button
                 type="button"
-                onClick={() => d3.select(svgRef.current).call((sel: any) => sel.call((z: any) => z.zoomBy(sel, 1.3)))}
+                onClick={() =>
+                  d3
+                    .select(svgRef.current)
+                    .call((sel: any) => sel.call((z: any) => z.zoomBy(sel, 1.3)))
+                }
                 className="p-2 text-slate-300 hover:bg-slate-800"
                 aria-label="Zoom in"
               >
@@ -580,7 +612,11 @@ export function GraphTool() {
               </button>
               <button
                 type="button"
-                onClick={() => d3.select(svgRef.current).call((sel: any) => sel.call((z: any) => z.zoomBy(sel, 0.77)))}
+                onClick={() =>
+                  d3
+                    .select(svgRef.current)
+                    .call((sel: any) => sel.call((z: any) => z.zoomBy(sel, 0.77)))
+                }
                 className="p-2 text-slate-300 hover:bg-slate-800"
                 aria-label="Zoom out"
               >
@@ -594,7 +630,10 @@ export function GraphTool() {
                   <span className="font-mono">{shortKey(hoverEdge.source)}</span>
                   <span
                     className="rounded px-1.5 py-0.5 text-[10px]"
-                    style={{ background: EDGE_STYLE[hoverEdge.relationship]?.color + '22', color: EDGE_STYLE[hoverEdge.relationship]?.color }}
+                    style={{
+                      background: EDGE_STYLE[hoverEdge.relationship]?.color + '22',
+                      color: EDGE_STYLE[hoverEdge.relationship]?.color,
+                    }}
                   >
                     {hoverEdge.label}
                   </span>
@@ -603,7 +642,8 @@ export function GraphTool() {
                 {hoverEdge.relationship === 'offer_match' && (
                   <p className="mt-1 text-slate-400">
                     {String(hoverEdge.metadata.sellingAsset ?? '')} →{' '}
-                    {String(hoverEdge.metadata.buyingAsset ?? '')} @ {String(hoverEdge.metadata.price ?? '')}
+                    {String(hoverEdge.metadata.buyingAsset ?? '')} @{' '}
+                    {String(hoverEdge.metadata.price ?? '')}
                   </p>
                 )}
                 {hoverEdge.relationship === 'payment' && (
@@ -660,7 +700,8 @@ export function GraphTool() {
           </div>
           {highlight && highlight.size > 0 && (
             <p className="text-xs text-muted-foreground">
-              Shortest path has {highlight.size} node{highlight.size > 1 ? 's' : ''} — highlighted in yellow.
+              Shortest path has {highlight.size} node{highlight.size > 1 ? 's' : ''} — highlighted
+              in yellow.
             </p>
           )}
         </div>
